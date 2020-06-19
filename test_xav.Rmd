@@ -1,0 +1,139 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r}
+library(tidybrowse)
+library(tidyverse)
+source("R/utils.R")
+
+```
+
++ Connect to UofT VPN
+
+```{r}
+# Init Selenium Browser
+chrome <- tidyselenium::chrome_init("chrome")
+chrome$open()
+
+# I use a selenium server running into a docker container
+# To falicitate interaction, I use pyautogui, which simulates physical mouse and keyboard input (if it is run for the first time in a container, you need to install pyautogui in the container)
+# selinput::doc_init_pyautogui("chrome")
+
+
+chrome %>% go("https://search.proquest.com/cbcacomplete/advanced")
+```
+
++ Type in search keywords
+
+## Meta Data
+
+Before getting content, meta-data are gathered. 
+
+```{r}
+
+current_url <- chrome$getCurrentUrl()[[1]]
+n_max_page <- 20
+
+# Generate Url for the first 20 pages
+urls <- str_replace(current_url, "(?<=/)\\d+(?=\\?)", as.character(1:n_max_page))
+
+meta_data <- urls[1:10] %>%
+  # Iterate over each url and scrape the corresponding data
+  imap_dfr(~{
+    print(.x)
+    out <- chrome %>%
+      go(.x) %>%
+      get_real_source_code() %>%
+      parse_page %>%
+      glimpse
+    
+    # If it breaks, data are written into global
+    # saf[[as.numeric(.y)]] <<- out
+    
+    return(out)
+    # page <- chrome %>% get_real_source_code()
+  }) %>%
+  mutate(id = 1:n())
+
+rio::export(meta_data, "meta_data_xav.xlsx")
+
+```
+
+
+```{r}
+
+save_dir <- "data_xavier"
+
+fs::dir_create(save_dir)
+
+# chrome$open()
+
+already <- dir(save_dir) %>%
+  str_extract("\\d+") %>%
+  as.numeric
+
+# Select a sample of links to explore that have not been already scrapped
+# Open a tab for each selected link
+meta_data %>%
+  # filter(!id %in% already) %>%
+  sample_n(10) %>%
+  split(1:nrow(.)) %>%
+  imap_dfr(~{
+
+    chrome %>% 
+      new_tab() %>%
+      doc_type(.x$link) %>%
+      doc_hot_keys("enter")
+    
+    Sys.sleep(1)
+    trig <- chrome %>%
+      tidyselenium::check_element(".g-recaptcha-bubble-arrow")
+    if(trig){break}
+  })
+
+
+# Iterate over each tab ; scrape the required data and close it
+chrome$getWindowHandles() %>%
+  walk(~try(get_info_from_opened_tab(chrome, save_dir = save_dir)))
+
+df <- dir("data_xavier", full.names= T) %>%
+  map_dfr(read_rds)
+  
+
+rio::export(df, "~/news_layoff_xav.xlsx")
+
+```
+
+
+# Old Trash
+
+```{r}
+# data <- meta_data %>%
+#   # filter(!id %in% already) %>%
+#   sample_n(10) %>%
+#   split(1:nrow(.)) %>%
+#   iwalk(~{
+#     Sys.sleep(runif(1, 1, 10))
+#     print(.x$id)
+#     out <- try(get_all_details(.x$link)) %>%
+#       glimpse
+#     if(inherits(out, "try-error")){
+#       test <- chrome %>% 
+#         get_real_source_code() %>%
+#         check_captcha
+#       print(.x$link) ; return(tibble())
+#     }
+#     write_rds(out, paste0("data_xav/", .x$id, ".rds"))
+#     # return(out)
+#   })
+
+```
+
